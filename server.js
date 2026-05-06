@@ -1,5 +1,6 @@
 require('dotenv').config();
 
+const fs = require('fs');
 const path = require('path');
 const express = require('express');
 const axios = require('axios');
@@ -12,6 +13,9 @@ const axiosRetry = axiosRetryModule.default || axiosRetryModule;
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const CACHE_TTL_SECONDS = Number(process.env.CACHE_TTL_SECONDS || 3600);
+const DATA_DIR = path.join(__dirname, 'data');
+const LOOKUP_LOG_JSONL = path.join(DATA_DIR, 'lookup-history.jsonl');
+const LOOKUP_LOG_CSV = path.join(DATA_DIR, 'lookup-history.csv');
 
 const MAKES = {
   toyota: {
@@ -346,6 +350,46 @@ app.use('/api', (req, res, next) => {
   next();
 });
 
+function ensureDataDir() {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+function csvEscape(value) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
+function appendLookupLog(entry) {
+  try {
+    ensureDataDir();
+    const record = {
+      timestamp: new Date().toISOString(),
+      ...entry
+    };
+    fs.appendFileSync(LOOKUP_LOG_JSONL, `${JSON.stringify(record)}\n`);
+    if (!fs.existsSync(LOOKUP_LOG_CSV)) {
+      fs.writeFileSync(LOOKUP_LOG_CSV, 'timestamp,vin,make,makeLabel,status,statusCode,cached,siteUsed,partsCount,vehicle,error,ip,userAgent\n');
+    }
+    const row = [
+      record.timestamp,
+      record.vin,
+      record.make,
+      record.makeLabel,
+      record.status,
+      record.statusCode,
+      record.cached,
+      record.siteUsed,
+      record.partsCount,
+      record.vehicle,
+      record.error,
+      record.ip,
+      record.userAgent
+    ].map(csvEscape).join(',');
+    fs.appendFileSync(LOOKUP_LOG_CSV, `${row}\n`);
+  } catch (logError) {
+    console.warn('[lookup-log:error]', logError.message);
+  }
+}
+
 const lookupLimiter = rateLimit({
   windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60000),
   max: Number(process.env.RATE_LIMIT_MAX || 30),
@@ -585,9 +629,25 @@ app.post('/api/detect', (req, res) => {
 });
 
 app.post('/api/lookup', lookupLimiter, async (req, res) => {
+  const logBase = {
+    vin: normalizeVin(req.body?.vin),
+    make: String(req.body?.make || '').toLowerCase().trim(),
+    makeLabel: '',
+    ip: req.ip,
+    userAgent: req.get('user-agent') || ''
+  };
+
   try {
     const vin = normalizeVin(req.body?.vin);
     if (!VIN_RE.test(vin)) {
+      appendLookupLog({
+        ...logBase,
+        vin,
+        status: 'invalid_vin',
+        statusCode: 400,
+        cached: false,
+        error: 'Invalid VIN'
+      });
       return res.status(400).json({ error: 'Invalid VIN. VIN must be 17 characters and exclude I, O, and Q.', vin });
     }
 
@@ -596,12 +656,33 @@ app.post('/api/lookup', lookupLimiter, async (req, res) => {
     const makeId = requestedMake && MAKES[requestedMake] ? requestedMake : detected.make;
 
     if (!makeId || !MAKES[makeId]) {
+      appendLookupLog({
+        ...logBase,
+        vin,
+        make: makeId || requestedMake || '',
+        status: 'make_not_detected',
+        statusCode: 422,
+        cached: false,
+        error: 'Make not detected'
+      });
       return res.status(422).json({ error: 'Make not detected', vin, detectedWmi: detected.detectedWmi });
     }
 
     const cacheKey = `${makeId}:${vin}`;
     const cached = cache.get(cacheKey);
     if (cached) {
+      appendLookupLog({
+        ...logBase,
+        vin,
+        make: makeId,
+        makeLabel: MAKES[makeId].label,
+        status: 'success',
+        statusCode: 200,
+        cached: true,
+        siteUsed: cached.siteUsed,
+        partsCount: cached.parts?.length || 0,
+        vehicle: cached.vehicle
+      });
       return res.json({ ...cached, cached: true });
     }
 
@@ -619,9 +700,30 @@ app.post('/api/lookup', lookupLimiter, async (req, res) => {
     };
 
     cache.set(cacheKey, payload);
+    appendLookupLog({
+      ...logBase,
+      vin,
+      make: makeId,
+      makeLabel: MAKES[makeId].label,
+      status: 'success',
+      statusCode: 200,
+      cached: false,
+      siteUsed: payload.siteUsed,
+      partsCount: payload.parts.length,
+      vehicle: payload.vehicle
+    });
     return res.json(payload);
   } catch (error) {
     console.error('[lookup:error]', error);
+    const statusCode = error.code === 404 ? 404 : error.code === 502 ? 502 : 500;
+    appendLookupLog({
+      ...logBase,
+      status: statusCode === 404 ? 'not_found' : statusCode === 502 ? 'site_error' : 'server_error',
+      statusCode,
+      cached: false,
+      error: error.message,
+      siteUsed: error.failures?.map((failure) => `${failure.site}:${failure.reason}`).join('; ') || ''
+    });
     if (error.code === 404) return res.status(404).json({ error: error.message, failures: error.failures || [] });
     if (error.code === 502) return res.status(502).json({ error: error.message, failures: error.failures || [] });
     return res.status(500).json({ error: 'Unexpected server error' });
