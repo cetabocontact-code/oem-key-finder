@@ -37,3 +37,11 @@ data/lookup-history.csv
 ```
 
 The `data/` folder is ignored by Git so VIN/search history is not published to GitHub.
+
+Recent searches are also visible publicly in the app and through:
+
+```text
+GET /api/history?limit=50
+```
+
+The public history response includes lookup details such as VIN, make, status, site used, parts count, and timestamp. It does not expose visitor IP addresses or user-agent strings.

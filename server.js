@@ -390,6 +390,44 @@ function appendLookupLog(entry) {
   }
 }
 
+function toPublicHistoryRecord(record) {
+  return {
+    timestamp: record.timestamp,
+    vin: record.vin || '',
+    make: record.make || '',
+    makeLabel: record.makeLabel || '',
+    status: record.status || '',
+    statusCode: Number(record.statusCode || 0),
+    cached: Boolean(record.cached),
+    siteUsed: record.siteUsed || '',
+    partsCount: Number(record.partsCount || 0),
+    vehicle: record.vehicle || '',
+    error: record.error || ''
+  };
+}
+
+function readLookupHistory(limit = 50) {
+  try {
+    if (!fs.existsSync(LOOKUP_LOG_JSONL)) return [];
+    const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 250));
+    const lines = fs.readFileSync(LOOKUP_LOG_JSONL, 'utf8').trim().split(/\r?\n/).filter(Boolean);
+    return lines
+      .slice(-safeLimit)
+      .reverse()
+      .map((line) => {
+        try {
+          return toPublicHistoryRecord(JSON.parse(line));
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  } catch (error) {
+    console.warn('[lookup-history:error]', error.message);
+    return [];
+  }
+}
+
 const lookupLimiter = rateLimit({
   windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60000),
   max: Number(process.env.RATE_LIMIT_MAX || 30),
@@ -621,6 +659,10 @@ async function lookupParts(makeId, vin) {
 
 app.get('/api/makes', (req, res) => {
   res.json({ makes: publicMakes() });
+});
+
+app.get('/api/history', (req, res) => {
+  res.json({ history: readLookupHistory(req.query.limit) });
 });
 
 app.post('/api/detect', (req, res) => {

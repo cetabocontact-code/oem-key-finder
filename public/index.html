@@ -253,6 +253,29 @@
       margin-top: 22px;
     }
 
+    .history-card {
+      margin-top: 18px;
+    }
+
+    .history-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .history-head h2 {
+      font-size: 26px;
+      text-transform: uppercase;
+    }
+
+    .history-empty {
+      color: var(--muted);
+      font-weight: 700;
+      padding: 12px;
+    }
+
     .vehicle-banner {
       display: flex;
       justify-content: space-between;
@@ -395,6 +418,28 @@
     <h2 class="section-title">Supported Makes</h2>
     <section id="makesGrid" class="makes-grid" aria-label="Supported makes"></section>
 
+    <section class="history-card card">
+      <div class="history-head">
+        <h2>Recent Searches</h2>
+        <button id="refreshHistory" class="secondary">Refresh</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>VIN</th>
+            <th>Make</th>
+            <th>Status</th>
+            <th>Site</th>
+            <th>Parts</th>
+          </tr>
+        </thead>
+        <tbody id="historyBody">
+          <tr><td colspan="6" class="history-empty">No searches yet</td></tr>
+        </tbody>
+      </table>
+    </section>
+
     <section id="status" class="status">
       <span class="spinner"></span>
       <span>Searching OEM car key parts...</span>
@@ -439,6 +484,7 @@
       makes: [],
       detected: null,
       results: null,
+      history: [],
       debounce: null
     };
 
@@ -461,6 +507,8 @@
       copyAll: document.getElementById('copyAll'),
       exportCsv: document.getElementById('exportCsv')
     };
+    els.historyBody = document.getElementById('historyBody');
+    els.refreshHistory = document.getElementById('refreshHistory');
 
     function setStatus(show) {
       els.status.style.display = show ? 'flex' : 'none';
@@ -512,6 +560,37 @@
         els.makeOverride.appendChild(option);
       }
       renderMakeCards();
+    }
+
+    function formatHistoryTime(value) {
+      if (!value) return '';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString();
+    }
+
+    function renderHistory() {
+      if (!state.history.length) {
+        els.historyBody.innerHTML = '<tr><td colspan="6" class="history-empty">No searches yet</td></tr>';
+        return;
+      }
+      els.historyBody.innerHTML = state.history.map((item) => `
+        <tr>
+          <td>${formatHistoryTime(item.timestamp)}</td>
+          <td class="part">${item.vin || ''}</td>
+          <td>${item.makeLabel || item.make || ''}</td>
+          <td>${item.status || ''} ${item.statusCode ? `(${item.statusCode})` : ''}</td>
+          <td>${item.siteUsed || ''}</td>
+          <td>${item.partsCount || 0}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadHistory() {
+      const response = await fetch('/api/history?limit=50');
+      const data = await response.json();
+      state.history = data.history || [];
+      renderHistory();
     }
 
     async function detectVin() {
@@ -588,6 +667,7 @@
         showError('Cannot reach the server. Make sure the app is running.');
       } finally {
         setStatus(false);
+        loadHistory().catch(() => {});
       }
     }
 
@@ -671,7 +751,14 @@
       URL.revokeObjectURL(link.href);
     });
 
-    loadMakes().catch(() => showError('Cannot reach the server. Make sure the app is running.'));
+    els.refreshHistory.addEventListener('click', () => {
+      loadHistory().catch(() => showError('Cannot load recent searches.'));
+    });
+
+    Promise.all([
+      loadMakes(),
+      loadHistory()
+    ]).catch(() => showError('Cannot reach the server. Make sure the app is running.'));
   </script>
 </body>
 </html>
