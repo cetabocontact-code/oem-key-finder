@@ -11,6 +11,8 @@ const rateLimit = require('express-rate-limit');
 
 const axiosRetry = axiosRetryModule.default || axiosRetryModule;
 const app = express();
+// Legacy tool RETIRED 2026-07-05 → redirect root to the new site (first route wins).
+app.get('/', (req, res) => res.redirect(302, 'https://locksmithdaddy.us/?utm_source=oem-key-finder&utm_medium=redirect&utm_campaign=legacy-retire'));
 const PORT = Number(process.env.PORT || 3000);
 const CACHE_TTL_SECONDS = Number(process.env.CACHE_TTL_SECONDS || 3600);
 const DATA_DIR = path.join(__dirname, 'data');

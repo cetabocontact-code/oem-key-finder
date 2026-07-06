@@ -282,7 +282,8 @@ async function lookupParts(makeId, vin) {
   throw error;
 }
 
-app.get('/', (req, res) => res.type('html').send(INDEX_HTML));
+// Legacy tool RETIRED 2026-07-05 → redirect to the new site.
+app.get('/', (req, res) => res.redirect(302, 'https://locksmithdaddy.us/?utm_source=oem-key-finder&utm_medium=redirect&utm_campaign=legacy-retire'));
 
 app.get('/api/makes', (req, res) => res.json({ makes: publicMakes() }));
 
